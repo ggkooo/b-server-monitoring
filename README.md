@@ -1,58 +1,237 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# b-server-monitoring
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Real-time server monitoring backend powered by Prometheus + Laravel Reverb.
 
-## About Laravel
+This project collects host and process metrics from Prometheus, exposes an authenticated snapshot API, and broadcasts live updates over WebSocket.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## Highlights
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+- ⚡ Instant metrics snapshot for first page load.
+- 📡 Real-time updates over WebSocket channel `metrics`.
+- 🧠 Process table (htop-like) grouped by `groupname` from `namedprocess_*` metrics.
+- 🔐 API key middleware for protected API access.
+- 🪶 Stateless runtime defaults (no database required for normal operation).
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## 🏗️ Architecture
 
-## Learning Laravel
+### 🔄 Data Flow
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+1. Prometheus is queried by service classes.
+2. A snapshot is assembled with:
+	- Global metrics (`cpu`, `memory`, `disk`, `network`, `system`)
+	- Process table (`processes.table`)
+3. Snapshot is cached for fast API response.
+4. Snapshot is broadcast as `metrics.updated` on channel `metrics`.
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+### 🧩 Main Components
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+- `PrometheusService`: executes PromQL queries (scalar and vector).
+- `MetricsCollector`: collects global grouped metrics.
+- `ProcessMetricsService`: builds process table by `groupname`.
+- `MetricsSnapshotService`: merges data and manages cache.
+- `BroadcastMetrics` command: refreshes snapshot and dispatches broadcast event.
+- `MetricsBroadcast` event: sends payload over Reverb.
+- `ApiKeyMiddleware`: protects API endpoints via `X-API-Key` header.
 
-## Agentic Development
+## 📋 Requirements
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+- PHP 8.3+
+- Composer
+- Running Prometheus endpoint
+- namedprocess exporter metrics available in Prometheus (for process table)
+
+## 🚀 Installation
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+composer install
+cp .env.example .env
+php artisan key:generate
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Set required environment variables in `.env`:
 
-## Contributing
+- `API_KEY`
+- `PROMETHEUS_BASE_URL`
+- `PROMETHEUS_USERNAME` and `PROMETHEUS_PASSWORD` (if needed)
+- `REVERB_APP_ID`, `REVERB_APP_KEY`, `REVERB_APP_SECRET`
+- `REVERB_HOST`, `REVERB_PORT`, `REVERB_SCHEME`
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+## 🧪 Run Locally
 
-## Code of Conduct
+Use three terminals:
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+```bash
+# Terminal 1
+php artisan serve
 
-## Security Vulnerabilities
+# Terminal 2
+php artisan reverb:start
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+# Terminal 3
+php artisan schedule:work
+```
 
-## License
+## 🔌 API
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+### 📥 Get Snapshot
+
+Endpoint:
+
+```text
+GET /api/metrics/snapshot
+```
+
+Required header:
+
+```text
+X-API-Key: <your_api_key>
+```
+
+Example:
+
+```bash
+curl -H "X-API-Key: YOUR_API_KEY" http://127.0.0.1:8000/api/metrics/snapshot
+```
+
+### 🧾 Snapshot Response Shape
+
+```json
+{
+    "metrics": {
+        "cpu": {
+            "usage_percent": 0.3333,
+            "cores_usage_percent": 0,
+            "iowait_percent": 0.0333,
+            "temperature_celsius": null,
+            "load_average_1m": 0.23,
+            "load_average_5m": 0.08,
+            "load_average_15m": 0.05,
+            "context_switches_per_second": 408
+        },
+        "memory": {
+            "usage_percent": 4.6193,
+            "swap_percent": 0,
+            "cached_mb": 695.7734
+        },
+        "disk": {
+            "root_used_percent": 23.8693,
+            "write_mb": 0.0141,
+            "read_mb": 0
+        },
+        "network": {
+            "download_mb": 0.0001,
+            "upload_mb": 0.0026,
+            "errors_total": 0
+        },
+        "system": {
+            "uptime_seconds": 8706.332,
+            "processes_running": 2,
+            "file_descriptors_allocated": 1088
+        }
+    },
+    "processes": {
+        "count": 2,
+        "table": [
+            {
+                "name": "process-exporte",
+                "cpu_percent": 1,
+                "memory_resident_bytes": 20889600,
+                "memory_virtual_bytes": 1268699136,
+                "threads": 12,
+                "disk_read_bytes_per_second": 0,
+                "disk_write_bytes_per_second": 0,
+                "context_switches_per_second": 45.8,
+                "open_filedesc": 7,
+                "uptime_seconds": 1507.322
+            },
+            {
+                "name": "htop",
+                "cpu_percent": 0,
+                "memory_resident_bytes": 0,
+                "memory_virtual_bytes": 0,
+                "threads": 0,
+                "disk_read_bytes_per_second": 0,
+                "disk_write_bytes_per_second": 0,
+                "context_switches_per_second": 0,
+                "open_filedesc": 0,
+                "uptime_seconds": 63910853230.322
+            }
+        ]
+    },
+    "generated_at": "2026-04-03T22:47:10+00:00"
+}
+```
+
+## 📶 WebSocket
+
+- Channel: `metrics`
+- Event: `metrics.updated`
+
+Connect to Reverb using Pusher protocol and subscribe to `metrics`. Every schedule tick sends a fresh snapshot payload.
+
+## 🖥️ Process Table Metrics
+
+The process table is built from `namedprocess_*` metrics and grouped by `groupname`.
+
+Columns returned:
+
+- `name`
+- `cpu_percent`
+- `memory_resident_bytes`
+- `memory_virtual_bytes`
+- `threads`
+- `disk_read_bytes_per_second`
+- `disk_write_bytes_per_second`
+- `context_switches_per_second`
+- `open_filedesc`
+- `uptime_seconds`
+
+Configured PromQL entries are available in `.env.example` as `PROMETHEUS_QUERY_PROCESS_*`.
+
+## ⚙️ Important Environment Variables
+
+### 🔐 App / Auth
+
+- `API_KEY`
+
+### 📡 Broadcast / Cache
+
+- `BROADCAST_CONNECTION`
+- `METRICS_BROADCAST_CHANNEL`
+- `METRICS_BROADCAST_EVENT`
+- `METRICS_BROADCAST_INTERVAL`
+- `METRICS_CACHE_KEY`
+- `METRICS_CACHE_TTL`
+
+### 📈 Prometheus
+
+- `PROMETHEUS_BASE_URL`
+- `PROMETHEUS_USERNAME`
+- `PROMETHEUS_PASSWORD`
+- `PROMETHEUS_TIMEOUT`
+- `PROMETHEUS_CONNECT_TIMEOUT`
+- `PROMETHEUS_QUERY_*`
+
+### 🛰️ Reverb
+
+- `REVERB_APP_ID`
+- `REVERB_APP_KEY`
+- `REVERB_APP_SECRET`
+- `REVERB_HOST`
+- `REVERB_PORT`
+- `REVERB_SCHEME`
+
+## 🛠️ Operational Notes
+
+- If first page load seems empty, check:
+  - Prometheus connectivity
+  - API key header
+  - `schedule:work` process running
+- If WebSocket connects but no updates arrive, check:
+  - `reverb:start` process running
+  - Scheduler running
+  - Event and channel names in env/config
+
+## 📄 License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
