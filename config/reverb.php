@@ -34,7 +34,13 @@ return [
             'path' => env('REVERB_SERVER_PATH', ''),
             'hostname' => env('REVERB_HOST'),
             'options' => [
-                'tls' => [],
+                'tls' => array_filter([
+                    'local_cert' => env('REVERB_TLS_CERT'),
+                    'local_pk' => env('REVERB_TLS_KEY'),
+                    'passphrase' => env('REVERB_TLS_PASSPHRASE'),
+                    'verify_peer' => filter_var(env('REVERB_TLS_VERIFY_PEER', false), FILTER_VALIDATE_BOOL),
+                    'allow_self_signed' => filter_var(env('REVERB_TLS_ALLOW_SELF_SIGNED', true), FILTER_VALIDATE_BOOL),
+                ], static fn ($value) => $value !== null),
             ],
             'max_request_size' => env('REVERB_MAX_REQUEST_SIZE', 10_000),
             'scaling' => [
