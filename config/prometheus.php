@@ -28,15 +28,13 @@ return [
             ],
             'cores_usage_percent' => [
                 'query' => env('PROMETHEUS_QUERY_CPU_CORES_USAGE_PERCENT'),
+                'type' => 'vector_by_label',
+                'label' => 'cpu',
                 'unit' => '%',
             ],
             'iowait_percent' => [
                 'query' => env('PROMETHEUS_QUERY_CPU_IOWAIT_PERCENT'),
                 'unit' => '%',
-            ],
-            'temperature_celsius' => [
-                'query' => env('PROMETHEUS_QUERY_CPU_TEMPERATURE_CELSIUS'),
-                'unit' => 'celsius',
             ],
             'load_average_1m' => [
                 'query' => env('PROMETHEUS_QUERY_LOAD_AVERAGE_1M'),
