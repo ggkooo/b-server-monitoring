@@ -1,58 +1,201 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# b-server-monitoring
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Real-time server monitoring backend powered by Prometheus + Laravel Reverb.
 
-## About Laravel
+This project collects host and process metrics from Prometheus and streams live updates over WebSocket. There is no HTTP API — all data is delivered through the WebSocket channel.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## ✨ Highlights
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+- 📡 Real-time updates over WebSocket channel `metrics`.
+- 🧠 Process table (htop-like) grouped by `groupname` from `namedprocess_*` metrics.
+- 🏎️ Per-core CPU usage returned as an array in the broadcast payload.
+- 🪶 Stateless runtime defaults (no database required).
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## 🏗️ Architecture
 
-## Learning Laravel
+### 🔄 Data Flow
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+1. Every 5 seconds the scheduler fires the `metrics:broadcast` command.
+2. `MetricsCollector` queries Prometheus for global metrics (`cpu`, `memory`, `disk`, `network`, `system`).
+3. `ProcessMetricsService` queries Prometheus for per-process metrics grouped by `groupname`.
+4. `MetricsSnapshotService` merges both sets and caches the result.
+5. `MetricsBroadcast` event fires and pushes the payload over Reverb to channel `metrics`.
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+### 🧩 Main Components
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+| Class | Responsibility |
+|---|---|
+| `PrometheusService` | Executes PromQL queries (scalar and vector) with optional Basic Auth. |
+| `MetricsCollector` | Collects and normalises global grouped metrics. |
+| `ProcessMetricsService` | Builds process table by `groupname`. |
+| `MetricsSnapshotService` | Merges metrics + processes and manages cache. |
+| `BroadcastMetrics` (command) | Refreshes snapshot and dispatches the broadcast event. |
+| `MetricsBroadcast` (event) | Sends payload over Reverb. |
 
-## Agentic Development
+## 📋 Requirements
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+- PHP 8.3+
+- Composer
+- Running Prometheus endpoint
+- `process-exporter` with `namedprocess_*` metrics available in Prometheus
+
+## 🚀 Installation
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+composer install
+cp .env.example .env
+php artisan key:generate
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Set required environment variables in `.env`:
 
-## Contributing
+- `PROMETHEUS_BASE_URL`
+- `PROMETHEUS_USERNAME` and `PROMETHEUS_PASSWORD` (if Prometheus requires Basic Auth)
+- `REVERB_APP_ID`, `REVERB_APP_KEY`, `REVERB_APP_SECRET`
+- `REVERB_HOST`, `REVERB_PORT`, `REVERB_SCHEME`
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+## 🧪 Run Locally
 
-## Code of Conduct
+```bash
+# Terminal 1 — WebSocket server
+php artisan reverb:start
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+# Terminal 2 — Scheduler (triggers every 5 s)
+php artisan schedule:work
+```
 
-## Security Vulnerabilities
+No `php artisan serve` needed — there are no HTTP endpoints.
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## 📶 WebSocket
 
-## License
+- **Channel:** `metrics`
+- **Event:** `metrics.updated`
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Connect using any Pusher-protocol client (e.g. Laravel Echo, Pusher JS, or MQTTX WebSocket tester with Pusher handshake). Every scheduler tick emits a fresh payload.
+
+### 📦 Payload Shape
+
+```json
+{
+    "metrics": {
+        "cpu": {
+            "usage_percent": 0.33,
+            "cores_usage_percent": [0.12, 0.45, 0.21, 0.38],
+            "iowait_percent": 0.03,
+            "load_average_1m": 0.23,
+            "load_average_5m": 0.08,
+            "load_average_15m": 0.05,
+            "context_switches_per_second": 408
+        },
+        "memory": {
+            "usage_percent": 4.62,
+            "swap_percent": 0,
+            "cached_mb": 695.77
+        },
+        "disk": {
+            "root_used_percent": 23.87,
+            "write_mb": 0.01,
+            "read_mb": 0
+        },
+        "network": {
+            "download_mb": 0.0001,
+            "upload_mb": 0.0026,
+            "errors_total": 0
+        },
+        "system": {
+            "uptime_seconds": 8706.33,
+            "processes_running": 2,
+            "file_descriptors_allocated": 1088
+        }
+    },
+    "processes": {
+        "count": 2,
+        "table": [
+            {
+                "name": "process-exporter",
+                "cpu_percent": 1,
+                "memory_resident_bytes": 20889600,
+                "memory_virtual_bytes": 1268699136,
+                "threads": 12,
+                "disk_read_bytes_per_second": 0,
+                "disk_write_bytes_per_second": 0,
+                "context_switches_per_second": 45.8,
+                "open_filedesc": 7,
+                "uptime_seconds": 1507.32
+            }
+        ]
+    },
+    "generated_at": "2026-04-03T22:47:10+00:00"
+}
+```
+
+## 🖥️ Process Table Metrics
+
+Built from `namedprocess_*` metrics, grouped by `groupname`. Columns returned per process:
+
+| Field | Description |
+|---|---|
+| `name` | Process group name |
+| `cpu_percent` | CPU usage % |
+| `memory_resident_bytes` | RSS in bytes |
+| `memory_virtual_bytes` | VSZ in bytes |
+| `threads` | Thread count |
+| `disk_read_bytes_per_second` | Disk read rate |
+| `disk_write_bytes_per_second` | Disk write rate |
+| `context_switches_per_second` | Context switch rate |
+| `open_filedesc` | Open file descriptors |
+| `uptime_seconds` | Process uptime |
+
+PromQL queries are configured in `.env` / `.env.example` as `PROMETHEUS_QUERY_PROCESS_*`.
+
+## ⚙️ Key Environment Variables
+
+### 📡 Broadcast / Cache
+
+| Variable | Description |
+|---|---|
+| `BROADCAST_CONNECTION` | Must be `reverb` |
+| `METRICS_BROADCAST_CHANNEL` | Channel name (default: `metrics`) |
+| `METRICS_BROADCAST_EVENT` | Event name (default: `metrics.updated`) |
+| `METRICS_BROADCAST_INTERVAL` | Scheduler interval in seconds |
+| `METRICS_CACHE_KEY` | Cache key for snapshot |
+| `METRICS_CACHE_TTL` | Cache TTL in seconds |
+
+### 📈 Prometheus
+
+| Variable | Description |
+|---|---|
+| `PROMETHEUS_BASE_URL` | Prometheus base URL |
+| `PROMETHEUS_USERNAME` | Basic Auth username (optional) |
+| `PROMETHEUS_PASSWORD` | Basic Auth password (optional) |
+| `PROMETHEUS_TIMEOUT` | HTTP timeout in seconds |
+| `PROMETHEUS_CONNECT_TIMEOUT` | Connection timeout in seconds |
+| `PROMETHEUS_QUERY_*` | Individual PromQL queries |
+
+### 🛰️ Reverb
+
+| Variable | Description |
+|---|---|
+| `REVERB_APP_ID` | App ID |
+| `REVERB_APP_KEY` | App key (used by clients) |
+| `REVERB_APP_SECRET` | App secret |
+| `REVERB_HOST` | Reverb host |
+| `REVERB_PORT` | Reverb port (default: `8080`) |
+| `REVERB_SCHEME` | `http` or `https` |
+
+## 🛠️ Operational Notes
+
+- **No updates arriving over WebSocket?**
+  - Check that `reverb:start` is running.
+  - Check that `schedule:work` is running.
+  - Confirm `BROADCAST_CONNECTION=reverb` and Reverb app credentials match on server and client.
+- **Prometheus returns empty values?**
+  - Check `PROMETHEUS_BASE_URL` is reachable.
+  - Verify `PROMETHEUS_USERNAME` / `PROMETHEUS_PASSWORD` if endpoint is protected.
+  - Inspect individual `PROMETHEUS_QUERY_*` entries against your Prometheus UI.
+- **WebSocket disconnects (~2 min)?**
+  - The client must respond to Pusher ping frames. Ensure your client library handles pings automatically (Laravel Echo does this out of the box).
+
+## 📄 License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
