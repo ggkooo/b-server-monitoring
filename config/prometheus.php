@@ -2,7 +2,7 @@
 
 return [
 
-    'base_url'        => env('PROMETHEUS_BASE_URL', 'http://127.0.0.1:9090'),
+    'base_url'        => env('PROMETHEUS_BASE_URL', 'http://prometheus:9090'),
     'timeout'         => (int) env('PROMETHEUS_TIMEOUT', 5),
     'connect_timeout' => (int) env('PROMETHEUS_CONNECT_TIMEOUT', 2),
     'username'        => env('PROMETHEUS_USERNAME'),
